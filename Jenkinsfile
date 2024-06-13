@@ -11,7 +11,7 @@ pipeline {
             script {
                sshagent(credentials: [SSH_KEY_ID]) {
                   sh '''
-                     ssh -o StrictHostKeyChecking=no ec2-user@3.92.169.188 <<'EOF'
+                     ssh -o StrictHostKeyChecking=no ec2-user@<EC2 Instance Public IP> <<'EOF'
                          echo "Connected to EC2 instance"
                          g++ -o /tmp/log_writer /path/to/log_writer.cpp &&
                          /tmp/log_writer &
