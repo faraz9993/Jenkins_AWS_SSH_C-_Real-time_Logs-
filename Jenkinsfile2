@@ -1,0 +1,103 @@
+pipeline {
+   agent any
+   environment {
+      SSH_KEY_ID = 'ec2-ssh-key' // Your ec2 instance pem file at Dashboard > Manage Jenknis > Credentails > System > Global
+      AWS_REGION = '<Your_region>'
+   }
+   stages {
+      stage('Clean Workspace') {
+         steps {
+            script {
+               echo 'Cleaning workspace'
+               deleteDir()
+            }
+         }
+      }
+      stage('Connect to EC2 and Run Command') {
+         steps {
+            script {
+               sshagent(credentials: [SSH_KEY_ID]) {
+                  sh '''
+                     ssh -o StrictHostKeyChecking=no ec2-user@<Your_ec2_public_ip> << 'EOF'
+                         echo "Connected to EC2 instance"
+                         cd /home/ec2-user
+                         g++ -o log_writer log_writer.cpp
+                         ./log_writer &
+                         while :; do
+                             # Get the initial modification time of the log file
+                             initial_mtime=$(stat -c %Y /tmp/sample_logs.log)
+                             # Monitor the log file for 10 seconds
+                             timeout 10 tail -f /tmp/sample_logs.log
+                             # Get the modification time of the log file after monitoring
+                             final_mtime=$(stat -c %Y /tmp/sample_logs.log)
+                             # Compare the modification times
+                             if [ "$initial_mtime" -eq "$final_mtime" ]; then
+                                 echo "No new logs for 10 seconds, exiting loop."
+                                 exit 0
+                             fi
+                         done
+                    EOF
+                  '''
+               }
+            }
+         }
+      }
+      stage('Install AWS CLI') {
+         steps {
+            script {
+               sshagent(credentials: [SSH_KEY_ID]) {
+                  sh '''
+                     ssh -o StrictHostKeyChecking=no ec2-user@<Your_ec2_public_ip> << 'EOF'
+                         echo "Checking if AWS CLI is installed"
+                         if ! command -v aws &> /dev/null; then
+                             echo "Installing AWS CLI"
+                             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                             unzip awscliv2.zip
+                             sudo ./aws/install
+                         fi
+                         echo "AWS CLI version:"
+                         aws --version
+                  '''
+               }
+            }
+         }
+      }
+      stage('Configure AWS CLI') {
+         steps {
+            script {
+               sshagent(credentials: [SSH_KEY_ID]) {
+                  sh '''
+                     ssh -o StrictHostKeyChecking=no ec2-user@<Your_ec2_public_ip> << 'EOF'
+                         echo "Configuring AWS CLI"
+                         aws configure set aws_access_key_id <Your_AWS_ACCESS_KEY_ID>
+                         aws configure set aws_secret_access_key <Your_AWS_Secret_Access_Key_ID>
+                         aws configure set default.region us-east-1
+                  '''
+               }
+            }
+         }
+      }
+      stage('Upload Log File to S3') {
+         steps {
+            script {
+               sshagent(credentials: [SSH_KEY_ID]) {
+                  sh '''
+                     ssh -o StrictHostKeyChecking=no ec2-user@<Your_ec2_public_ip> << 'EOF'
+                         echo "Uploading log file to S3"
+                         aws s3 cp /tmp/sample_logs.log s3://<Your_Bucket_Name>/sample_logs.log
+                         echo "Log file uploaded successfully"
+                  '''
+               }
+            }
+         }
+      }
+    
+        stage('Download Log File from S3') {
+            steps {
+                withAWS(region: AWS_REGION, credentials: 'aws-credentials') {
+                    s3Download(bucket: '<Your_bucket_name>', file: '<Your_log_file_name>')
+                }
+            }
+        }
+    }
+}
